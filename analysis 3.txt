@@ -1,0 +1,255 @@
+================================================================================
+STREAMPULSE AI: 4-PAGE ARCHITECTURE & EXECUTION BLUEPRINT
+Target Competition: Google Cloud Summer Blockbuster Hackathon
+Track: ClickHouse Partner Track (High-Throughput Analytics & Real-Time Event Processing)
+Ecosystem: Google Cloud Agent Builder (Gemini Enterprise) + ClickHouse Cloud
+================================================================================
+
+--------------------------------------------------------------------------------
+PAGE 1: STRATEGIC VISION, PROBLEM STATEMENT & ARCHITECTURE TOPOLOGY
+--------------------------------------------------------------------------------
+
+1. EXECUTIVE SUMMARY & MEDIA INDUSTRY DILEMMA
+Live streaming media events—ranging from global sports championships to cinema
+premieres and music concerts—operate under zero-tolerance quality-of-service
+constraints. Industry data confirms that viewers abandon a live broadcast within
+90 seconds if playback rebuffering or quality degradation exceeds 2% of the
+overall session time.
+
+In legacy Media Operations Centers (MOCs), diagnosing delivery degradation is
+a cumbersome manual process:
+  1. Telemetry monitors trigger high-level threshold alerts.
+  2. An on-call engineer receives an incident page and logs into monitoring consoles.
+  3. The engineer manually writes multi-dimensional analytical queries across
+     tens of millions of client log lines to determine if degradation is isolated
+     to an ISP, a geographic region, an operating system, or a specific CDN edge.
+  4. The engineer accesses traffic management dashboards and manually alters
+     traffic distribution weights.
+
+This manual troubleshooting loop takes between 8 and 15 minutes, leading to viewer
+churn, brand degradation, and lost advertising revenue.
+
+StreamPulse AI transforms this reactive manual triage into an autonomous, closed-loop
+architecture. By pairing the sub-second analytical processing of ClickHouse Cloud
+with the autonomous reasoning and tool-calling capabilities of Google Cloud Agent
+Builder (Gemini Enterprise), StreamPulse AI continuously detects anomalies, performs
+instant root-cause isolation, and executes automated CDN failover within 15 seconds.
+
+
+2. HIGH-LEVEL ARCHITECTURAL TOPOLOGY
+
+[ Client Video Players / Edge Probes ]
+  (ExoPlayer, AVPlayer, HLS.js Telemetry Beacons)
+                     |
+                     v (Continuous Telemetry Stream)
++-------------------------------------------------------------+
+|              Google Cloud Run: Ingestion Engine             |
+|  - FastAPI Microservice                                     |
+|  - Payload Validation & Micro-Batching Buffer               |
++------------------------------+------------------------------+
+                               |
+                               v (ClickHouse Native TCP / HTTP)
++-------------------------------------------------------------+
+|                 ClickHouse Cloud Database                   |
+|  - Raw Partitioned Telemetry Logs (MergeTree)               |
+|  - Real-Time Aggregated Views (SummingMergeTree)            |
+|  - Audit Trail Table for Remediation Actions                |
++------------------------------+------------------------------+
+                               |
+                               v (Model Context Protocol Interface)
++-------------------------------------------------------------+
+|             ClickHouse MCP Server (Agent Gateway)           |
+|  - Exposes Analytical Tooling via JSON-RPC                  |
+|  - Sanitized Dynamic SQL Execution                          |
+|  - CDN Routing Control Interface                            |
++------------------------------+------------------------------+
+                               |
+                               v (Deterministic Tool Calling)
++-------------------------------------------------------------+
+|     Google Cloud Agent Builder / Gemini Enterprise Engine   |
+|  - Autonomous Multi-Step Reasoning                          |
+|  - Root Cause Isolation Logic (Region vs. CDN vs. ISP)      |
+|  - Decision-Making & Mitigation Dispatcher                  |
++------------------------------+------------------------------+
+                               |
+                               v (WebSocket / Server-Sent Events)
++-------------------------------------------------------------+
+|             Mission Control Operations Center               |
+|  - Live Quality of Service (QoS) Stream Graphs              |
+|  - Gemini Agent Autonomous Thought-Log Feed                 |
+|  - Manual Override & Anomaly Simulation Trigger             |
++-------------------------------------------------------------+
+
+
+--------------------------------------------------------------------------------
+PAGE 2: COMPONENT BREAKDOWN & INGESTION PIPELINES
+--------------------------------------------------------------------------------
+
+1. INGESTION ENGINE (GOOGLE CLOUD RUN)
+- Ingestion API: A lightweight, containerized microservice deployed on Google Cloud
+  Run that receives continuous telemetry pings from simulated client media players.
+- Payload Structure: Every 3 seconds, media players emit a beacon containing:
+  * stream_id: Unique broadcast channel identifier.
+  * viewer_id: Unique anonymous client identifier.
+  * cdn_provider: Current edge delivery network (Cloudflare, Fastly, Akamai).
+  * region: Geographic deployment area (US-East, EU-West, AP-South).
+  * isp: Internet service provider serving the client.
+  * bitrate_kbps: Current playback bitrate in kilobits per second.
+  * buffer_ratio: Percentage of time spent buffering during the last interval.
+  * frame_drop_rate: Rate of dropped frames per second.
+  * http_error_code: Video chunk HTTP response code (200, 404, 502).
+- Batch & Flush Strategy: Inbound records are held in an in-memory buffer and
+  flushed to ClickHouse in micro-batches of 500 to 1,000 records to optimize
+  ingestion throughput without stressing network sockets.
+
+
+2. ANALYTICAL DATA STORE (CLICKHOUSE CLOUD)
+ClickHouse serves as the analytical foundation of the system due to its column-
+oriented storage engine and real-time query performance.
+
+- Raw Storage Schema: Uses the standard MergeTree engine partitioned by month
+  and indexed by (stream_id, region, cdn_provider, event_time). This design
+  ensures that analytical scans only access blocks belonging to the active stream.
+- Real-Time Aggregation Views: High-frequency video streams generate millions of
+  rows. To enable Gemini to analyze system health without running full-table
+  scans, a background Materialized View continuously aggregates raw telemetry
+  into 1-minute rolling windows using a SummingMergeTree engine.
+- Metrics Pre-Computed:
+  * Average bitrate across region and CDN.
+  * Average buffer ratio.
+  * Count of active sessions experiencing rebuffering above 5%.
+  * 95th-percentile CDN latency and chunk delivery failure rates.
+- Audit Trail Engine: A dedicated cdn_incident_audit table logs every autonomous
+  action executed by Gemini, preserving the triggering metric, prior routing state,
+  new routing state, timestamp, and verification status.
+
+
+3. MODEL CONTEXT PROTOCOL (MCP) INTERFACE
+The ClickHouse MCP Server provides a clean, standardized interface between
+Gemini's reasoning loop and ClickHouse:
+- Controlled Data Access: Rather than giving an LLM unconstrained database
+  access, the MCP server exposes specific, type-safe analytical tools.
+- Tool 1: query_stream_health(stream_id, lookback_minutes)
+  Queries the 1-minute aggregated view and returns health metrics broken down by
+  region and CDN provider.
+- Tool 2: isolate_incident_cluster(stream_id, suspect_dimension)
+  Performs multi-dimensional grouping to isolate whether degradation is driven by
+  a specific CDN node, a regional ISP breakdown, or an origin encoder fault.
+- Tool 3: remediate_cdn_traffic(stream_id, failed_cdn, fallback_cdn, region)
+  Simulates rerouting CDN edge traffic to an alternate provider and writes an
+  audit log entry into ClickHouse.
+
+
+--------------------------------------------------------------------------------
+PAGE 3: AUTONOMOUS AGENT DESIGN & MITIGATION WORKFLOWS
+--------------------------------------------------------------------------------
+
+1. GEMINI AGENT REASONING ENGINE (GOOGLE CLOUD AGENT BUILDER)
+The agent operates as an autonomous Network Operations Director within Google
+Cloud Agent Builder, powered by Gemini Enterprise with function calling enabled.
+
+Reasoning Flow:
+  1. Telemetry Ingestion: ClickHouse continuously aggregates incoming metrics.
+  2. Threshold Breach: Average buffer ratio in a region exceeds 3.0%.
+  3. Step 1 (Observation): Agent invokes query_stream_health via MCP.
+  4. Step 2 (Isolation): Agent evaluates metric distribution across dimensions:
+     - If all CDNs in the region fail simultaneously: Root cause is Origin Server
+       or Regional ISP issue.
+     - If only one CDN in the region fails: Root cause is Edge CDN Node degradation.
+  5. Step 3 (Remediation): Agent checks the health of alternate CDNs in the same
+     region and invokes remediate_cdn_traffic to transfer client traffic.
+  6. Step 4 (Verification): Agent executes a verification check after 45 seconds
+     to confirm the buffer ratio has dropped below 1.0%.
+  7. Step 5 (Audit & Alert): Agent records the outcome in ClickHouse and streams
+     a 3-sentence post-mortem report to the operations dashboard.
+
+
+2. DETERMINISTIC OPERATIONAL RULES
+To guarantee production reliability, Gemini operates under strict deterministic rules:
+- Sample Size Validation: An alert is only acted upon if the affected cluster
+  has at least 50 concurrent active viewers, filtering out isolated client-side
+  Wi-Fi fluctuations.
+- Dual-Failure Handling: If multiple CDNs degrade at the same time in the same
+  geography, the agent flags an "Origin Network Alert" rather than rapidly
+  swapping CDN routes back and forth.
+- Automatic Cooldown: A mandatory 3-minute cooldown period per stream region
+  prevents routing oscillations.
+
+
+3. MISSION CONTROL USER INTERFACE (FRONTEND EXPERIENCE)
+- Real-Time Telemetry Graphs: Visualizes bitrate and buffer ratio trends across
+  active regions in real time.
+- Autonomous Thought Feed: A live streaming console showing the Gemini agent's
+  internal chain of reasoning:
+  * [OBSERVATION] Buffer ratio in EU-West spiked to 4.2% on Fastly.
+  * [REASONING] Origin health normal. Akamai EU-West reporting 0.2% buffer ratio.
+  * [ACTION] Invoking remediate_cdn_traffic: EU-West Fastly -> Akamai.
+  * [VERIFICATION] Buffer ratio normalized to 0.4%. Incident resolved.
+- Interactive Chaos Button: Allows hackathon judges to inject synthetic edge
+  latency on demand and watch the agent resolve the issue autonomously.
+
+
+--------------------------------------------------------------------------------
+PAGE 4: EXECUTION ROADMAP, VIDEO STORYBOARD & SUBMISSION STRATEGY
+--------------------------------------------------------------------------------
+
+1. HACKATHON EXECUTION ROADMAP
+
+- Phase 1: Data & Storage Foundation (Day 1)
+  * Provision ClickHouse Cloud instance.
+  * Deploy database schema (MergeTree raw table + SummingMergeTree view).
+  * Run synthetic player telemetry generator script.
+
+- Phase 2: Agent & Tool Integration (Day 2)
+  * Set up Google Cloud Agent Builder with Gemini Enterprise.
+  * Implement ClickHouse MCP server exposing diagnostic and routing tools.
+  * Validate tool invocation through test anomaly scenarios.
+
+- Phase 3: Dashboard & Cloud Deployment (Day 3)
+  * Build the operations dashboard (React + Tailwind or Streamlit).
+  * Connect the real-time telemetry stream and agent thought feed.
+  * Deploy backend microservices to Google Cloud Run and frontend to Vercel/Firebase.
+
+- Phase 4: Verification, Video & Submission (Day 4)
+  * Verify imports of google-cloud-aiplatform and clickhouse-connect in source code.
+  * Add MIT License file to repository root.
+  * Record, edit, and caption the 3-minute demo video.
+  * Complete Devpost submission under the ClickHouse track.
+
+
+2. 3-MINUTE DEMO VIDEO STORYBOARD
+
+- 0:00 - 0:30 | Hook & Problem Statement
+  * Screen: Mission Control dashboard displaying healthy baseline streaming metrics.
+  * Voiceover: Introduce StreamPulse AI. Highlight how silent CDN packet loss causes
+    viewer churn in live media broadcasts and explain why 15-minute manual triage
+    is unacceptable in modern media workflows.
+
+- 0:30 - 1:15 | The Incident & Autonomous Triage
+  * Screen: Click the "Simulate Edge Failure" button; buffer ratio spikes in EU-West.
+  * Voiceover: Show Gemini detecting the anomaly via ClickHouse 1-minute aggregates,
+    querying dimensional breakdowns, and isolating the failure to a single CDN edge.
+
+- 1:15 - 2:00 | Autonomous Remediation & Recovery
+  * Screen: Thought log displays remediate_cdn_traffic execution; buffer chart drops
+    back below 1%.
+  * Voiceover: Walk through the automated failover and self-healing verification cycle.
+
+- 2:00 - 2:35 | Codebase & Architecture Walkthrough
+  * Screen: VS Code editor and Google Cloud / ClickHouse console.
+  * Voiceover: Highlight runtime imports of clickhouse-connect and Google Cloud SDKs.
+    Show the ClickHouse Materialized View and MCP server implementation.
+
+- 2:35 - 3:00 | Summary & Submission Wrap-up
+  * Screen: Public GitHub repository showing the MIT License and hosted web application.
+  * Voiceover: Reiterate business value, operational time savings, and provide
+    closing remarks.
+
+
+3. SUBMISSION COMPLIANCE CHECKLIST
+[x] Runtime imports and execution of both Google Cloud SDK and ClickHouse client.
+[x] Public Git repository with detectable MIT License in root directory.
+[x] Publicly accessible hosted application URL.
+[x] 3-minute demo video hosted on YouTube/Vimeo (Public/Unlisted, English audio/subtitles).
+[x] Devpost submission registered under the ClickHouse Partner Track.
+================================================================================
