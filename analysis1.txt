@@ -1,0 +1,207 @@
+
+
+add this to all team members repository# PRD: ScoutSense
+**Script-to-Screen Fact & Location Continuity Agent**
+
+| | |
+|---|---|
+| Status | Draft — Hackathon submission (Google Cloud Agentic Cinema Hackathon) |
+| Owner | [Your name/team] |
+| Partner track | Parallel — official `parallel-google-adk` integration on Parallel's Search API |
+| Core stack | Gemini (via Vertex AI) + Google ADK + Vertex AI Agent Builder/Agent Engine |
+| Target users | Screenwriters, script supervisors, location managers, studio production crews |
+| Last updated | 2026-09-09 |
+
+---
+
+## 1. Problem Statement
+
+Before a scene is greenlit or scheduled, someone on the production has to manually answer two questions for every scene that touches the real world:
+
+1. **Is this factually/legally sound?** Does the scene reference a real place, historical event, law, government building, technical process, or brand in a way that's inaccurate, legally risky (e.g. depicting a real living person or institution unfavorably, needing a permit for a real government building), or just embarrassingly wrong (e.g. currency, dates, defunct organizations)?
+2. **Where could we actually shoot this?** If the scene describes a setting rather than naming a real place ("an abandoned Soviet radar station," "a coastal fishing village"), what real, currently-accessible locations plausibly match it?
+
+Today this is done manually — a script supervisor, researcher, or junior member of the writers' room searches the web scene-by-scene. This is slow (est. 30–90 min per scene with meaningful real-world content), inconsistent (depends on who's doing it and how thorough they are), and easy to skip under deadline pressure — which is exactly when legal/continuity errors make it to set or to the final cut.
+
+**This is a real bottleneck in the "development/pre-production" stage of the entertainment value chain**, squarely in the filmmakers/screenwriters/studio-crew lane the hackathon targets.
+
+## 2. Goals
+
+- Cut first-pass fact/location research time per scene from ~30–90 minutes to under 2 minutes of agent runtime plus a few minutes of human review.
+- Produce output that is *directly usable*, not just a chat answer: a structured, cited brief that can be filed, searched, and handed to legal or the locations department without rewriting.
+- Ground every factual claim in **live, current web data** — not the model's training data — since screenwriters invent plausible-but-wrong details constantly and locations' real-world accessibility changes over time.
+- Ship as a real, callable agent: usable via a web UI/API today, and registerable as a no-code tool inside Vertex AI Agent Builder for non-technical production staff.
+
+### Non-goals (v1)
+
+- Not a full script-coverage tool (story structure, character arcs, marketability scoring) — scoped strictly to factual/location/continuity verification.
+- Not a legal-clearance system of record — it surfaces risk and open questions, it does not replace a clearance attorney's sign-off.
+- Not doing actual permit filing or location booking — it identifies candidates and flags what's needed, a human/locations team takes it from there.
+- No fine-tuning; v1 uses prompting + structured output only.
+
+## 3. Target Users & Use Cases
+
+| User | Use case |
+|---|---|
+| **Screenwriter** | Paste a new scene while drafting to sanity-check any real-world claim before it goes further ("did I get the year the Berlin Wall fell right?"). |
+| **Script supervisor** | Batch-run an entire script/episode ahead of a table read to produce a continuity/fact-check log. |
+| **Location manager** | Get a first pass of real candidate locations matching a written setting, with access/permit notes, before committing scouting-trip time. |
+| **Studio legal/compliance (secondary)** | Receive the "open questions" and "production risk" sections as a triage list of what needs formal legal review. |
+
+## 4. User Stories
+
+1. *As a screenwriter*, I paste a scene and get back a list of every checkable claim in it, each marked confirmed/contradicted/unverified with a plain-language explanation and sources, so I can fix wrong details before the table read.
+2. *As a script supervisor*, I run this against a full episode PDF and get one consolidated report I can attach to the production bible.
+3. *As a location manager*, I read a scene's setting description and get 2–4 real candidate locations with region and access notes, instead of starting a web search from scratch.
+4. *As a producer*, I see an "open questions" list surfaced automatically (e.g. "scene depicts a real currently-operating courthouse — confirm we have/need permission") so nothing legally risky slips through silently.
+
+## 5. Functional Requirements
+
+### 5.1 Input
+- FR-1: Accept a scene or script excerpt as raw text (v1), via the web UI, the `POST /brief` API, or Agent Builder chat.
+- FR-2: (Stretch) Accept a full script PDF and process it into one brief per scene, using the Document Processing patterns already in the hackathon resource set.
+
+### 5.2 Claim extraction
+- FR-3: The agent must identify every claim in the following categories: `historical_fact`, `location_detail`, `legal_or_permit`, `technical_or_scientific`, `brand_or_ip`, `continuity`.
+- FR-4: Each extracted claim must retain a `scene_reference` (scene number/slugline) so findings can be traced back to the script.
+
+### 5.3 Verification (Parallel integration — the core requirement)
+- FR-5: For every extracted claim, the agent must call Parallel's `web_search` tool (via `parallel-google-adk`) with a focused objective and 2–3 keyword queries, and may call `web_fetch`/`extract` to read specific promising sources in depth.
+- FR-6: Every claim must be assigned a `verification_status`: `confirmed`, `partially_confirmed`, `contradicted`, or `unverified`. The agent must not fabricate sources — only URLs actually returned by Parallel's tools may be cited.
+- FR-7: The agent must not silently resolve ambiguous legal/rights questions — anything requiring human judgment goes into `open_questions`.
+- FR-8: `ParallelTracingPlugin` must be attached at the Runner level so every Parallel tool call (latency, citation count, cost) is auditable after the fact — both for debugging and as runtime-usage proof for judging.
+
+### 5.4 Location candidate generation
+- FR-9: For scenes with a described (non-named) setting, the agent must search for and return 2–4 real candidate locations with `region`, `why_it_fits`, and `permit_or_access_notes`.
+
+### 5.5 Output
+- FR-10: Output must conform to the `ContinuityBrief` Pydantic schema (see `schemas.py`) — structured JSON, not free text — so it can be piped into other systems (Sheets, Slack, a production tracker) without additional parsing logic.
+- FR-11: Output must include a short human-readable `generated_summary` (2–4 sentences) for a skim-read by an EP or script supervisor.
+
+### 5.6 Deployment & access
+- FR-12: The agent must be deployable to Vertex AI Agent Engine as a managed, callable service.
+- FR-13: The agent must also be exposed as a real **web** front end (Cloud Run + `static/index.html`), satisfying the contest's platform requirement, and additionally registerable as a custom tool inside Vertex AI Agent Builder using Service Agent ID Token auth for non-technical staff.
+
+## 6. Non-Functional Requirements
+
+| Category | Requirement |
+|---|---|
+| Latency | Single-scene brief in under ~60–90 seconds (bounded by number of claims × search calls) |
+| Cost | Runs comfortably within Parallel's free-tier signup credit ($20–80) for demo/dev use |
+| Reliability | If Parallel's API is unreachable, the agent should degrade to returning `unverified` status with a note, not fail the whole request |
+| Security | Parallel API key stored in Secret Manager, never hardcoded; Cloud Run service not publicly unauthenticated in production |
+| Auditability | Every claim's cited sources must be traceable — no citation without a real returned URL; `ParallelTracingPlugin` trace retained per run |
+| Observability | Agent Engine tracing enabled (`enable_tracing=True`) for debugging tool-call chains |
+
+## 7. System Architecture
+
+```
+Screenwriter / Script Supervisor / Location Manager
+                    │  (web UI)
+                    ▼
+        ┌───────────────────────┐
+        │   ScoutSense Agent     │   ADK LlmAgent
+        │   (Gemini 2.5 Pro)     │   instruction: extract → verify → propose
+        └──────────┬─────────────┘
+                   │ Python function calls
+                   ▼
+        ┌───────────────────────────┐
+        │ parallel-google-adk         │
+        │ (official ADK tools on      │
+        │ Parallel's Search API)      │
+        │  • web_search • web_fetch   │
+        │  • extract                  │
+        └───────────────────────────┘
+                   │
+                   ▼ structured output (Pydantic → JSON)
+        ┌───────────────────────────┐
+        │      ContinuityBrief        │
+        └──────────┬─────────────────┘
+                    │
+     ┌──────────────┼──────────────────┐
+     ▼              ▼                  ▼
+Vertex AI      Cloud Run + web UI   Registered as a
+Agent Engine   (static/index.html,   tool in Vertex AI
+(managed)      POST /brief)          Agent Builder (chat UI)
+```
+
+## 8. Data Model (summary — full detail in `schemas.py`)
+
+- `ContinuityBrief`
+  - `scene_title: str`
+  - `generated_summary: str`
+  - `claims: List[ScriptClaim]`
+    - `claim_type`, `scene_reference`, `claim_text`, `verification_status`, `finding_summary`, `sources: List[SourceRef]`, `production_risk`
+  - `location_candidates: List[LocationCandidate]`
+    - `name`, `region`, `why_it_fits`, `permit_or_access_notes`, `sources`
+  - `open_questions: List[str]`
+
+## 9. Key Prompt/Agent Behavior Decisions
+
+- The system instruction forces the model to treat claim verification and location research as **tool-driven**, not knowledge-driven — it must call Parallel before asserting a status, rather than answering from memory.
+- `output_schema=ContinuityBrief` on the ADK `LlmAgent` forces structured final output, removing the need for a separate parsing/extraction pass.
+- The agent is instructed to keep `finding_summary` short (2–3 sentences) to keep the brief skimmable rather than turning into a research dump.
+
+## 10. Success Metrics (for demo/judging)
+
+- **Functional demo**: live call against a real scene, showing an actual Parallel `web_search`/`web_fetch`/`extract` call and a `ContinuityBrief` with real cited URLs (not mocked).
+- **Time saved (qualitative)**: side-by-side of "manual search time for this scene" vs. agent runtime.
+- **Correctness spot-check**: at least one deliberately-planted factual error in the demo scene (e.g. wrong currency/date) that the agent correctly flags as `contradicted`.
+- **Partner integration depth**: `web_search`, `web_fetch`, and `extract` all demonstrably invoked via the official package, with the tracing plugin's output shown as proof.
+
+## 11. Risks & Mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Model asserts a verification status without actually calling the tool | System instruction explicitly requires a tool call per claim; can add a lightweight post-check that every `confirmed`/`contradicted` claim has ≥1 source, else force `unverified` |
+| Parallel API quota/cost during heavy demo/testing | Free signup credit ($20-80) plus a $5/month free tier available; usage is light per brief |
+| Hallucinated citations | Explicit instruction: only cite URLs returned by tool calls; schema requires `SourceRef` objects, not freeform text |
+| Legal false confidence | `open_questions` field exists specifically so the agent flags rather than resolves ambiguous legal/rights matters |
+| Long scripts exceed reasonable single-call scope | v1 scopes to one scene/excerpt at a time; full-script batching is an explicit stretch goal (FR-2), not a v1 blocker |
+| Submission disqualified on a technicality (license, platform, AI-vendor rule) | See Section 13 — compliance mapped explicitly against the Official Rules |
+
+## 12. Milestones (hackathon timeline)
+
+1. **MVP (local)**: `agent.py` + `schemas.py` + `test_local.py` running against a sample scene, real Parallel calls visible in output. ✅ (built)
+2. **Web app**: `app_server.py` + `static/index.html` on Cloud Run, `POST /brief` working end-to-end. ✅ (built)
+3. **Managed deployment**: `deploy_agent_engine.py` pushed to Vertex AI Agent Engine. ✅ (built)
+4. **Agent Builder registration**: Cloud Run service registered as a tool inside Agent Builder with Service Agent ID Token auth, so it's reachable from a no-code chat UI.
+5. **Demo scene set**: 2–3 original scenes prepared in advance (one with a planted factual error, one with a described-not-named setting) for a clean, reliable demo — no copyrighted or real-person content.
+6. **Submission packaging**: public repo + license, hosted URL, ≤3-min video, text description (see Section 13 checklist).
+
+## 13. Compliance with Official Contest Rules
+
+The Official Rules (Google Cloud Agentic Cinema Hackathon) impose several
+hard constraints beyond the resources-guide framing this PRD was originally
+written against. This section maps each one to how ScoutSense satisfies it.
+
+| Requirement (Official Rules) | How ScoutSense satisfies it |
+|---|---|
+| **AI usage limited to Google Cloud AI tools + the chosen Partner's built-in AI features; no other vendor's AI models/frameworks/APIs** | Only Gemini (via `google-adk` / `google-cloud-aiplatform`) is used as a model. The only other "AI-adjacent" dependency is Parallel's own Search API — the Partner product for this track — via their official `parallel-google-adk` package. No OpenAI/Anthropic/AWS/Microsoft AI tooling anywhere in the stack. |
+| **Parallel track: must actively use Parallel's Search API at runtime via the official parallel-web SDK (or an explicitly listed equivalent)** | Switched from the general-purpose Search MCP to **`parallel-google-adk`**, Parallel's own official ADK `FunctionTools` package (built on their official `parallel-web` SDK) — one of the explicitly accepted integration paths. It's imported and invoked inside `agent.py`'s tool list, called live during every brief generation, and `ParallelTracingPlugin` surfaces the actual call trace for judging/demo purposes. |
+| **Must demonstrate Google Cloud usage at runtime via an accepted package (`google-adk`, `google-genai`, `google-generativeai`, or `google-cloud-aiplatform`)** | `agent.py` imports and calls `google.adk`; `deploy_agent_engine.py` imports and calls `google.cloud.aiplatform` / `vertexai`. Both are loaded and executed, not just mentioned. |
+| **Must run on web, Android, or iOS** | Runs on **web**: `app_server.py` serves a real HTML/JS front end (`static/index.html`) at `/`, backed by `POST /brief`, deployable to Cloud Run; can additionally be reached through Vertex AI Agent Builder's own web chat UI. |
+| **Newly created during the Contest Period; original work** | Built from scratch for this submission; no reuse of prior projects. |
+| **Public, open-source repository with an OSI-approved license detectable at the top of the repo (About section)** | MIT `LICENSE` file added at repo root; repo must be pushed as **public** on GitHub/GitLab/Bitbucket before submission (not yet done — action item). |
+| **Team size ≤ 4, one designated Representative if a team** | Administrative — confirm before submitting. |
+| **Submission must include: hosted project URL, text description (features, tech, data sources, findings/learnings), public repo URL, demo video ≤3 min on YouTube/Vimeo, in English** | Text description drafted separately from this PRD (see submission checklist below); video and hosted URL are the two remaining production steps. |
+| **No third-party IP, trademarks, or non-original content in the video/submission; no depiction of real people in a way that could be seen as an endorsement** | Demo scenes used in `test_local.py` / `static/index.html` are original, fictional placeholder scenes (e.g. a generic "abandoned Soviet radar station" scene) — avoid using real copyrighted script excerpts or real named individuals in the demo video. |
+| **Judging criteria: Technological Implementation, Design, Potential Impact, Quality of the Idea (equally weighted)** | Addressed respectively by: real runtime Parallel+Gemini integration with tracing; the web UI (not just a bare API/CLI); the "PRD → problem statement" framing tied to a concrete production bottleneck; and the non-obvious pairing of live web grounding with structured, schema-enforced output rather than a chat transcript. |
+
+### Submission checklist (action items, not yet done)
+
+- [ ] Push repo to a **public** GitHub/GitLab/Bitbucket with `LICENSE` visible in the About section.
+- [ ] Deploy `app_server.py` to Cloud Run (or Agent Engine + a thin web front end) and get a stable hosted URL.
+- [ ] Record a **≤3 minute** demo video showing the web UI actually generating a brief from a live Parallel API call, upload to YouTube or Vimeo (public/unlisted), English or English-subtitled.
+- [ ] Write the submission text description: features/functionality, technologies used (Gemini, ADK, `parallel-google-adk`, Vertex AI Agent Engine/Cloud Run), data sources (live web via Parallel), and findings/learnings from building it.
+- [ ] Confirm team roster on Devpost (max 4) and designate a Representative if entering as a team.
+- [ ] Double-check no real trademarked IP, copyrighted script text, or real named private individuals appear in the demo video or repo sample data.
+- [ ] Submit before **2:00 PM PT, September 9, 2026** — late entries are disqualified regardless of completeness.
+
+## 14. Out of Scope / Future Work
+
+- Multi-agent split (e.g. a dedicated "Legal Risk Agent" and "Locations Agent" coordinated via A2A) once the single-agent version is proven.
+- Google Sheets / production-tracker write-back tool.
+- Imagen-generated mood boards per location candidate.
+- Full-script PDF batching with a consolidated per-episode report.
+- Slack/Docs delivery integration for the brief.
